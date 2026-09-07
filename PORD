@@ -1,0 +1,168 @@
+Function UploadFile(session As NotesSession, webRequest As NotesHTTPRequest, apiBase As String,_
+    apiKey As String, knowledgeId As String, doc As NotesDocument, MSdb As NotesDatabase,_
+    MSview As NotesView) As Boolean
+	%REM
+		功能描述：將 Notes 文件內容轉換為 Markdown 格式上傳至外部 API，並關聯至指定知識庫。
+		流程步驟：
+		1. 資料轉換：將 doc 欄位（單號、問題說明、解決方案等）組合為 Markdown 字串。
+		2. 檔案上傳：以 Multipart/form-data 格式將 Markdown 內容發送至 /api/v1/files/。
+		3. 狀態輪詢 (Polling)：每隔 3 秒查詢一次檔案處理狀態，最多重試 5 次，直到狀態為 'completed'。
+		4. 知識庫關聯：檔案處理完成後，將檔案 ID 關聯至指定的 knowledgeId。
+		參數說明：
+		- session (NotesSession): 目前的 Notes 作業階段。
+		- webRequest (NotesHTTPRequest): 用於發送 REST API 請求的物件。
+		- apiBase (String): API 伺服器的基礎 URL。
+		- apiKey (String): API 認證使用的 Bearer Token。
+		- knowledgeId (String): 目標知識庫的唯一識別碼。
+		- doc (NotesDocument): 要被上傳的原始 Notes 文件。
+		傳回值：
+		- True: 檔案成功上傳、處理並關聯至知識庫。
+		- False: 過程中任一步驟失敗（HTTP 錯誤、逾時或 API 回傳 failed）。
+	%END REM
+	
+	' 預設回傳值為失敗
+	UploadFile = False
+	
+	Dim boundary As String
+	boundary = "----NotesUploadBoundary7MA4YWxkTrZu0gW"
+	
+	Dim CRLF As String
+	CRLF = Chr(13) & Chr(10)
+	
+	res = GetMappingArray(doc.ErrorType(0), doc.ERTypePS(0))
+	
+	' 將文件各欄位組合為 Markdown 格式的純文字內容
+	' Markdown格式下標題 # or ##，在VDB中會一個標題一個CHUNK，所以要注意下#的時機
+	Dim fileContent As String
+	fileContent = "# 問題說明: " + doc.FAQ_Entity_Edit(0) + CRLF +_
+	doc.AdialogQue(0) + CRLF + CRLF +_
+	"** 關鍵詞：" + res(0) + "、" + res(1) + "、" + res(2) + "**" + CRLF + CRLF +_
+	"問題標的設備: " + CRLF + doc.des(0) + CRLF + CRLF +_
+	"問題標的設備料號: " + CRLF + doc.pn(0) + CRLF + CRLF +_
+	"客戶端報修案號: " + CRLF + doc.CRepairSNO(0) + CRLF + CRLF +_
+	"WM單號: " + CRLF + doc.SerialNo(0) + CRLF + CRLF +_
+	"客戶名稱: " + CRLF + doc.CompanyName(0) + CRLF + CRLF +_
+	"客戶統一編號: " + CRLF + doc.Cid(0) + CRLF + CRLF +_
+	"叫修時間: " + CRLF + Format(doc.CrDate(0),"yyyy/mm/dd") + " " + Format(doc.CrTime(0),"hh:nn") + CRLF + CRLF +_
+	"完修時間: " + CRLF + Format(doc.EngCDT(0),"yyyy/mm/dd hh:nn") + CRLF + CRLF +_
+	"預估之解決方案說明: " + CRLF + doc.AdialogSol(0) + CRLF + CRLF
+	
+	Dim MSdc As NotesDocumentCollection
+	Dim MSdoc As NotesDocument
+	Set MSdc = MSview.Getalldocumentsbykey(doc.SerialNo(0), True)
+	' 若有使用料件記錄，則補充料件相關資訊
+	If MSdc.Count = 0 Then 
+		fileContent = fileContent + "結案說明: " + CRLF + "未使用料件 " + CRLF
+	Else
+		Set MSdoc = MSdc.Getfirstdocument()
+		msc = 0
+		While Not MSdoc Is Nothing
+			If msc = 0 Then
+				fileContent = fileContent + "結案說明: " + CRLF + "使用料件  " + MSdoc.pn(0)
+			Else
+				fileContent = fileContent + "、" +　MSdoc.pn(0)
+			End If
+			msc = msc + 1
+			Set MSdoc = MSdc.Getnextdocument(MSdoc)
+		Wend
+	End If
+	
+	' --- 步驟 1: 建構 Multipart 封包並上傳檔案 ---
+	' 以單號作為檔名，組合符合 multipart/form-data 規範的請求本體
+	Dim multipartBody As String
+	multipartBody = "--" & boundary & CRLF
+	multipartBody = multipartBody & "Content-Disposition: form-data; name=""file""; filename=""" & doc.SerialNo(0) & ".md""" & CRLF
+	multipartBody = multipartBody & "Content-Type: text/plain; charset=utf-8" & CRLF
+	multipartBody = multipartBody & CRLF
+	multipartBody = multipartBody & fileContent & CRLF
+	multipartBody = multipartBody & "--" & boundary & "--" & CRLF
+	
+	' 設定上傳所需的認證及內容類型標頭
+	Call webRequest.ResetHeaders()
+	webRequest.Preferstrings = True
+	Call webRequest.SetHeaderField("Authorization", "Bearer " & apiKey)
+	Call webRequest.SetHeaderField("Content-Type", "multipart/form-data; boundary=" & boundary)
+	
+	' 發送 POST 請求上傳檔案
+	Dim uploadResp As String
+	uploadResp = webRequest.Post(apiBase & "/api/v1/files/", multipartBody)
+	
+	' 上傳失敗則直接結束（只要回應碼中含有 "200" 即視為成功，不分大小寫）
+	Print webRequest.Responsecode
+	If Instr(1, webRequest.Responsecode, "200", 1) = 0 Then Exit Function
+	
+	' 從回傳 JSON 中擷取上傳後的檔案 ID
+	Dim fileId As String
+	fileId = ExtractJsonValue(uploadResp, "id")
+	
+	' 若無法取得檔案 ID 則結束
+	If fileId = "" Then Exit Function
+	
+	' --- 步驟 2: 輪詢確認檔案於伺服器端的處理狀態 ---
+	Dim processStatus As String
+	Dim retryCount As Integer
+	Dim statusResp As String
+	
+	retryCount = 0
+	processStatus = ""
+	
+	Do While processStatus <> "completed"
+		' 已達重試上限（5 次），視為處理逾時，放棄此筆
+		If retryCount >= 5 Then
+			Print "檔案 " & doc.SerialNo(0) & " 狀態確認逾時，跳過"
+			Exit Function
+		End If
+		
+		' 第一次立即查詢，後續每次間隔 2 秒再重試
+		If retryCount > 0 Then
+			Sleep 1
+		End If
+		
+		' 設定查詢狀態所需的認證標頭
+		Call webRequest.ResetHeaders()
+		webRequest.Preferstrings = True
+		Call webRequest.SetHeaderField("Authorization", "Bearer " & apiKey)
+		
+		' 發送 GET 請求查詢此檔案的處理狀態
+		statusResp = webRequest.Get(apiBase & "/api/v1/files/" & fileId & "/process/status")
+		
+		' 若 HTTP 請求本身失敗，計入重試次數後繼續下一輪（只要回應碼中含有 "200" 即視為成功）
+		If Instr(1, webRequest.Responsecode, "200", 1) = 0 Then
+			retryCount = retryCount + 1
+			GoTo RetryStatus
+		End If
+		
+		' 從回傳 JSON 中擷取 status 欄位值
+		processStatus = ExtractJsonValue(statusResp, "status")
+		
+		' 伺服器明確回傳處理失敗，直接放棄此筆
+		If processStatus = "failed" Then
+			Print "檔案 " & doc.SerialNo(0) & " 處理失敗（API 回傳 failed）"
+			Exit Function
+		End If
+		
+		retryCount = retryCount + 1
+RetryStatus:
+	Loop
+	
+	' --- 步驟 3: 狀態確認完成，將檔案關聯至指定知識庫 ---
+	Call webRequest.ResetHeaders()
+	Call webRequest.SetHeaderField("Authorization", "Bearer " & apiKey)
+	Call webRequest.SetHeaderField("Content-Type", "application/json")
+	
+	' 組合關聯用的 JSON 請求本體
+	Dim addBody As String
+	addBody = "{""file_id"": """ & fileId & """}"
+	
+	' 發送 POST 請求將檔案加入知識庫
+	Dim addResp As String
+	addResp = webRequest.Post(apiBase & "/api/v1/knowledge/" & knowledgeId & "/file/add", addBody)
+	
+	' 關聯失敗則結束（只要回應碼中含有 "200" 即視為成功，不分大小寫）
+	Print webRequest.Responsecode
+	If Instr(1, webRequest.Responsecode, "200", 1) = 0 Then Exit Function
+	
+	' 所有步驟皆成功，回傳 True
+	UploadFile = True
+    
+End Function
