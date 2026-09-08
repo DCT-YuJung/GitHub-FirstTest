@@ -1,0 +1,13 @@
+'++LotusScript Development Environment:2:5:(Options):0:74
+%REM
+	Library 8782
+	Created 2026/9/8 by YUJUNG CHEN/DCT
+	Description: Comments for Library
+%END REM
+Option Public
+Option Declare
+
+
+'++LotusScript Development Environment:2:5:(Forward):0:1
+
+'++LotusScript Development Environment:2:5:(Declarations):0:2

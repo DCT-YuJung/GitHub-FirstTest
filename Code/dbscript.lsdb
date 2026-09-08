@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<databasescript xmlns='http://www.lotus.com/dxl' version='12.0' maintenanceversion='1.0'
+ replicaid='48258E6C0017A6D5' designerversion='8.5.3'>
+<noteinfo noteid='16a' unid='1E36A41A06F25C5B48258E6C0018B7A4' sequence='1'>
+<created><datetime>20260908T122958,76+08</datetime></created>
+<modified><datetime>20260908T122958,77+08</datetime></modified>
+<revised><datetime>20260908T122958,76+08</datetime></revised>
+<lastaccessed><datetime>20260908T122958,76+08</datetime></lastaccessed>
+<addedtofile><datetime>20260908T122958,76+08</datetime></addedtofile></noteinfo>
+<updatedby><name>CN=YUJUNG CHEN/O=DCT</name></updatedby>
+<wassignedby><name>CN=YUJUNG CHEN/O=DCT</name></wassignedby></databasescript>
+
